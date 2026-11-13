@@ -2,7 +2,9 @@
 
 Unofficial ClickHouse LTS builds for older `x86_64` processors.
 
-The automation checks the upstream ClickHouse releases every day, selects the newest published LTS tag, and builds it with `X86_ARCH_LEVEL=2`. The resulting binary requires the `x86-64-v2` baseline (SSE4.2, SSSE3 and POPCNT), but does not require AVX or AVX2.
+> Automated builds are currently paused. The GitHub-hosted workflow was removed because a clean ClickHouse build exceeded the practical capacity of the standard runner. Builds will resume on a higher-performance host.
+
+The build configuration targets the newest published LTS tag with `X86_ARCH_LEVEL=2`. The resulting binary requires the `x86-64-v2` baseline (SSE4.2, SSSE3 and POPCNT), but does not require AVX or AVX2.
 
 ## Downloads
 
@@ -30,7 +32,7 @@ Before publication, the workflow:
 4. Starts the final Server image and executes a query through `clickhouse client`.
 5. Publishes a SHA256 checksum, container SBOM, and build provenance.
 
-The workflow fails closed: no GitHub Release is created unless compilation, compatibility checks, container tests, GHCR publication, and anonymous GHCR access all succeed.
+The release process fails closed: no GitHub Release should be created unless compilation, compatibility checks, container tests, GHCR publication, and anonymous GHCR access all succeed.
 
 ## Upstream
 
