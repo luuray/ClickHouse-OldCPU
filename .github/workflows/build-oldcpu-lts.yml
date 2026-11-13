@@ -9,6 +9,11 @@ on:
         description: "Optional upstream LTS tag, for example v26.8.34.13-lts"
         required: false
         type: string
+      bootstrap_registry:
+        description: "Create the GHCR package before its one-time visibility change"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -19,8 +24,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  bootstrap-registry:
+    name: Initialize the GHCR package
+    if: inputs.bootstrap_registry == true
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Publish the registry bootstrap image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/$owner/clickhouse-oldcpu"
+          mkdir registry-bootstrap
+          cat > registry-bootstrap/Dockerfile <<EOF
+          FROM busybox:1.37
+          LABEL org.opencontainers.image.description="Registry initialization image; use versioned ClickHouse tags for production"
+          LABEL org.opencontainers.image.source="https://github.com/$GITHUB_REPOSITORY"
+          EOF
+          echo "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker build --tag "$image:registry-bootstrap" registry-bootstrap
+          docker push "$image:registry-bootstrap"
+
   build-and-publish:
     name: Build, verify, and publish
+    if: inputs.bootstrap_registry != true
     runs-on: ubuntu-24.04
     timeout-minutes: 360
 
