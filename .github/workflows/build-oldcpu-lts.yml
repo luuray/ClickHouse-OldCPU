@@ -137,19 +137,80 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      - name: Pull the ClickHouse build environment
+      - name: Resolve and pull the ClickHouse build environment
         if: steps.metadata.outputs.skip != 'true'
         id: builder
         shell: bash
         run: |
           set -euo pipefail
-          docker pull clickhouse/binary-builder:latest
-          digest="$(docker image inspect clickhouse/binary-builder:latest --format '{{index .RepoDigests 0}}')"
+
+          builder_tag="$(python3 - <<'PY'
+          import ast
+          import hashlib
+          from pathlib import Path
+
+          source = Path("source")
+          definitions = ast.parse((source / "ci/defs/defs.py").read_text())
+          configs = {}
+
+          for node in ast.walk(definitions):
+              if not isinstance(node, ast.Call):
+                  continue
+              if not isinstance(node.func, ast.Attribute) or node.func.attr != "Config":
+                  continue
+              values = {keyword.arg: keyword.value for keyword in node.keywords if keyword.arg}
+              if not {"name", "path", "depends_on"}.issubset(values):
+                  continue
+              try:
+                  name = ast.literal_eval(values["name"])
+                  path = ast.literal_eval(values["path"])
+                  depends_on = ast.literal_eval(values["depends_on"])
+              except (ValueError, TypeError):
+                  continue
+              if isinstance(name, str) and isinstance(path, str) and isinstance(depends_on, list):
+                  configs[name] = (path, depends_on)
+
+          target = "clickhouse/binary-builder"
+          if target not in configs:
+              raise SystemExit(f"Cannot find {target} in ci/defs/defs.py")
+
+          digest = hashlib.md5()
+
+          def add_config(name, active):
+              if name in active:
+                  raise SystemExit(f"Docker dependency cycle at {name}")
+              if name not in configs:
+                  raise SystemExit(f"Unknown Docker dependency: {name}")
+              path, dependencies = configs[name]
+              for dependency in dependencies:
+                  add_config(dependency, active | {name})
+              root = source / path.removeprefix("./")
+              files = sorted(
+                  (entry for entry in root.rglob("*") if entry.is_file()),
+                  key=lambda entry: str(entry),
+                  reverse=True,
+              )
+              if not files:
+                  raise SystemExit(f"No files found for Docker context: {root}")
+              for file in files:
+                  digest.update(file.read_bytes())
+
+          add_config(target, set())
+          print(digest.hexdigest()[:20])
+          PY
+          )"
+
+          image="clickhouse/binary-builder:$builder_tag"
+          docker pull "$image"
+          digest="$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "Builder image: $digest"
+          echo "Builder image: $image ($digest)"
 
       - name: Build the x86-64-v2 binary
         if: steps.metadata.outputs.skip != 'true'
+        env:
+          BUILDER_IMAGE: ${{ steps.builder.outputs.image }}
         shell: bash
         run: |
           set -euo pipefail
@@ -162,7 +223,7 @@ jobs:
               --env OPENSSL_CONF=/etc/ssl/openssl.cnf \
               --volume "$GITHUB_WORKSPACE/source:/ClickHouse" \
               --workdir /ClickHouse \
-              clickhouse/binary-builder:latest \
+              "$BUILDER_IMAGE" \
               bash -euo pipefail -c '
                   cmake -S /ClickHouse -B /ClickHouse/build_oldcpu -G Ninja \
                       -DCMAKE_BUILD_TYPE=None \
