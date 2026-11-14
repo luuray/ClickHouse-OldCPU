@@ -1,0 +1,37 @@
+name: Upload release asset
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Extract and verify the release binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=ghcr.io/luuray/clickhouse-oldcpu:release-asset-26.8.34.13
+          echo "$GH_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+          docker pull "$image"
+          container="$(docker create "$image")"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container:/asset/clickhouse-26.8.34.13-lts-linux-x86_64-v2" .
+          docker rm "$container" >/dev/null
+          trap - EXIT
+
+          echo 'ee8a7b1e49fef842768ba4832f0cd6d734fe6cd8439b6ab28c1a2bda074918d0  clickhouse-26.8.34.13-lts-linux-x86_64-v2' | sha256sum -c -
+          gh release upload v26.8.34.13-lts-x86_64-v2 \
+              clickhouse-26.8.34.13-lts-linux-x86_64-v2 \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          gh release edit v26.8.34.13-lts-x86_64-v2 \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft=false \
+              --latest
